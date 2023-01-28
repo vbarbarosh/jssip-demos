@@ -10,6 +10,8 @@ bin/run
 
 3. Open second incognito tab in Firefox http://127.0.0.1:3000?second
 
+![](img/screenshot.png)
+
 ## Resources
 
 * https://jssip.net/
