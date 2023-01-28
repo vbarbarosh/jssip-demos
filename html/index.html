@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <link href="https://unpkg.com/@vbarbarosh/smcss@0.8.0/dist/sm.css" rel="stylesheet">
+    <title>jssip demo</title>
+</head>
+<body>
+
+<br>
+
+<div v-show="true" id="app" class="w800 ma bs5" style="display:none;">
+    <div v-if="is_ua_connecting" class="yellow">Connecting...</div>
+    <div v-if="is_ua_connected" class="green">Connected</div>
+    <div v-if="is_ringing">
+        <p>Ringing...</p>
+        <button v-on:click="click_ringing_cancel">cancel</button>
+    </div>
+    <div v-if="is_incoming">
+        <p>Incoming...</p>
+        <button v-on:click="click_incoming_accept">accept</button>
+        <button v-on:click="click_incoming_reject">reject</button>
+    </div>
+    <div v-if="is_established">
+        <p>Talking...</p>
+        <button v-on:click="click_established_close">close</button>
+    </div>
+    <div v-if="(!is_ringing && !is_incoming && !is_established)">
+        <button v-on:click="click_ua_call">call</button>
+    </div>
+    <div class="hsplit">
+        <div class="w50p">
+            <h2 class="xm">incoming</h2>
+            <div class="oa resize border">
+                <video ref="incoming_video" class="db ww hh max-ww max-hh"></video>
+            </div>
+            <!--
+            <label><input v-model="incoming_audio" type="checkbox"> audio</label>
+            <label><input v-model="incoming_video" type="checkbox"> video</label>
+            -->
+        </div>
+        <div class="w50p">
+            <h2 class="xm">outgoing</h2>
+            <div class="oa resize border">
+                <video ref="outgoing_video" muted class="db ww hh max-ww max-hh"></video>
+            </div>
+            <label><input v-model="outgoing_audio" type="checkbox"> audio</label>
+            <label><input v-model="outgoing_video" type="checkbox"> video</label>
+        </div>
+    </div>
+    <div>
+        <ul>
+            <li v-for="message in messages" v-bind:class="{fl: message.is_remote, fr: !message.is_remote}" class="cb">
+                {{ message.body }}
+            </li>
+        </ul>
+        <textarea v-model="message_body" class="db ww xm xp"></textarea>
+        <button v-on:click="click_ua_send_message">send</button>
+    </div>
+</div>
+
+<script src="https://unpkg.com/jquery@3.6.2/dist/jquery.js"></script>
+<script src="https://unpkg.com/bluebird@3.7.2/js/browser/bluebird.js"></script>
+<script src="https://unpkg.com/vue@2.7.14/dist/vue.js"></script>
+<script src="lib/jssip.js"></script>
+
+<script>
+(function () {
+
+const default_local = !window.location.search ? 'sip:1001@sip.local' : 'sip:1002@sip.local';
+const default_remote = !window.location.search ? 'sip:1002@sip.local' : 'sip:1001@sip.local';
+
+const local_uri = new URLSearchParams(window.location.search).get('local_uri') || default_local;
+const remote_uri = new URLSearchParams(window.location.search).get('remote_uri') || default_remote;
+
+console.log({local_uri, remote_uri});
+
+const socket = new JsSIP.WebSocketInterface('ws://127.0.0.1:3000/sip');
+const configuration = {
+    sockets: [socket],
+    uri: local_uri,
+    password: '1234',
+};
+
+const ua = new JsSIP.UA(configuration);
+let session = null;
+
+    new Vue({
+        el: '#app',
+        data: {
+            local_uri,
+            remote_uri,
+            is_ua_connected: false,
+            is_ua_connecting: false,
+            is_ua_registered: false,
+            is_ringing: false,
+            is_incoming: false,
+            is_established: false,
+            incoming_audio: true,
+            incoming_video: true,
+            outgoing_audio: true,
+            outgoing_video: true,
+            messages: [],
+            message_body: '',
+        },
+        watch: {
+            outgoing_audio: function (next, prev) {
+                if (session && session.connection && next !== prev) {
+                    if (next) {
+                        session.unmute({audio: true});
+                    }
+                    else {
+                        session.mute({audio: true});
+                    }
+                }
+            },
+            outgoing_video: function (next, prev) {
+                if (session && session.connection && next !== prev) {
+                    if (next) {
+                        session.unmute({video: true});
+                    }
+                    else {
+                        session.mute({video: true});
+                    }
+                }
+            },
+            incoming_audio: function () {
+            },
+            incoming_video: function () {
+            },
+        },
+        methods: {
+            refresh: function () {
+                this.is_ua_connected = ua.isConnected();
+                this.is_ua_connecting = false;
+                this.is_ua_registered = ua.isRegistered();
+                this.is_ringing = (session && session.isInProgress() && session.direction == 'outgoing');
+                this.is_incoming = (session && session.isInProgress() && session.direction == 'incoming');
+                this.is_established = (session && session.isEstablished());
+                //this.incoming_audio = true
+                //this.incoming_video = true;
+                //this.outgoing_audio = true;
+                //this.outgoing_video = true;
+            },
+            clean: function () {
+                if (session) {
+                    if (!session.isEnded()) {
+                        session.terminate();
+                    }
+                    session = null;
+                }
+                this.$refs.incoming_video.srcObject = null;
+                this.$refs.outgoing_video.srcObject = null;
+                this.refresh();
+            },
+            ua_newMessage: function (event) {
+                if (event.originator == 'remote') {
+                    event.message.accept();
+                    this.messages.push({is_remote: true, body: event.request.body});
+                }
+                else {
+                    this.messages.push({is_remote: false, body: event.request.body});
+                }
+                this.refresh();
+            },
+            ua_newRTCSession: function (event) {
+                // https://jssip.net/documentation/3.10.x/api/session/#section_events
+                'peerconnection,connecting,sending,progress,accepted,confirmed,ended,failed,newDTMF,newInfo,hold,unhold,muted,unmuted,reinvite,update,refer,replaces,sdp,getusermediafailed,peerconnection:createofferfailed,peerconnection:createanswerfailed,peerconnection:setlocaldescriptionfailed,peerconnection:setremotedescriptionfailed'.split(',').forEach(function (name) {
+                    event.session.on(name, v => console.log(`[session_${name}]`));
+                });
+                const _this = this;
+                this.clean();
+                session = event.session;
+                session.on('connecting', this.refresh);
+                session.on('ended', this.clean);
+                session.on('failed', this.clean);
+                session.on('accepted', this.refresh);
+                session.on('confirmed', this.refresh);
+                // This is not how things should be. Just to make it work...
+                if (session.connection) {
+                    session.once('connecting', () => session.mute({audio: !this.outgoing_audio, video: !this.outgoing_video}));
+                }
+                else {
+                    session.once('peerconnection', function () {
+                        session.once('connecting', function () {
+                            session.mute({audio: !_this.outgoing_audio, video: !_this.outgoing_video});
+                        });
+                    });
+                }
+                if (session.connection) {
+                    'addstream,connectionstatechange,datachannel,icecandidate,icecandidateerror,iceconnectionstatechange,icegatheringstatechange,negotiationneeded,removestream,signalingstatechange,track'.split(',').forEach(function (name) {
+                        session.connection.addEventListener(name, v => console.log(`[outgoing_session_connection_${name}]`, v));
+                    });
+                    session.connection.addEventListener('addstream', function (event2) {
+                        _this.$refs.incoming_video.srcObject = event2.stream;
+                        _this.$refs.incoming_video.play();
+                    });
+                }
+                else {
+                    // https://stackoverflow.com/a/51045509/1478566
+                    session.on('peerconnection', function (event2) {
+                        event2.peerconnection.addEventListener('addstream', function (event3) {
+                            _this.$refs.incoming_video.srcObject = event3.stream;
+                            _this.$refs.incoming_video.play();
+                        });
+                    });
+                }
+                this.refresh();
+            },
+            click_ua_call: async function () {
+                const mediaStream = await navigator.mediaDevices.getUserMedia({audio: true, video: true});
+                const session = ua.call(this.remote_uri, {mediaStream});
+                this.$refs.outgoing_video.srcObject = mediaStream;
+                this.$refs.outgoing_video.play();
+            },
+            click_ua_send_message: function () {
+                ua.sendMessage(this.remote_uri, this.message_body);
+                this.message_body = '';
+            },
+            click_ringing_cancel: function () {
+                this.clean();
+            },
+            click_incoming_accept: async function () {
+                const mediaStream = await navigator.mediaDevices.getUserMedia({audio: true, video: true});
+                session.answer({mediaStream});
+                this.$refs.outgoing_video.srcObject = mediaStream;
+                this.$refs.outgoing_video.play();
+            },
+            click_incoming_reject: function () {
+                this.clean();
+            },
+            click_established_close: function () {
+                this.clean();
+            }
+        },
+        created: function () {
+            const _this = this;
+            // https://jssip.net/documentation/3.10.x/api/ua/#section_events
+            'connecting,connected,disconnected,registered,unregistered,registrationFailed,registrationExpiring,newRTCSession,newMessage,newOptions,sipEvent'.split(',').forEach(function (name) {
+                ua.on(name, v => console.log(`[ua_${name}]`, v));
+            });
+            ua.on('connecting', function () {
+                _this.is_ua_connected = false;
+                _this.is_ua_connecting = true;
+            });
+            ua.on('connected', this.refresh);
+            ua.on('disconnected', this.refresh);
+            ua.on('registered', this.refresh);
+            ua.on('unregistered', this.refresh);
+            ua.on('newMessage', this.ua_newMessage);
+            ua.on('newRTCSession', this.ua_newRTCSession);
+            ua.start();
+        },
+    });
+
+})();
+</script>
+
+</body>
+</html>

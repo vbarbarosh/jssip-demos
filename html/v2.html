@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <link href="https://unpkg.com/@vbarbarosh/smcss@0.8.0/dist/sm.css" rel="stylesheet" />
+    <title>Title of the Page</title>
+</head>
+<body>
+
+<br>
+
+<div id="app" class="mg15">
+
+<div class="w400 h300 oa resize border">
+    <video ref="video" class="db ww hh"></video>
+</div>
+<div>
+    <button>mute</button>
+    <button>unmute</button>
+    <button>turn off video</button>
+    <button>turn on video</button>
+    <button v-on:click="click_call">call</button>
+    <button v-on:click="click_stop">stop</button>
+</div>
+
+</div>
+
+<script src="https://unpkg.com/jquery@3.6.2/dist/jquery.js"></script>
+<script src="https://unpkg.com/bluebird@3.7.2/js/browser/bluebird.js"></script>
+<script src="https://unpkg.com/vue@2.7.14/dist/vue.js"></script>
+<script src="lib/jssip.js"></script>
+
+<script>
+(function () {
+
+    // Create our JsSIP instance and run it:
+    const socket = new JsSIP.WebSocketInterface('ws://127.0.0.1:5062');
+    const configuration = {
+        sockets: [socket],
+        uri: 'sip:1001@sip.local',
+        password: '1234',
+    };
+    const ua = new JsSIP.UA(configuration);
+    'connecting,connected,disconnected,registered,unregistered,registrationFailed,registrationExpiring,newRTCSession,newMessage,newOptions,sipEvent'.split(',').forEach(function (name) {
+        ua.on(name, event => console.log(`[ua_${name}]`, event));
+    });
+    ua.start();
+
+    new Vue({
+        el: '#app',
+        data: {
+            local_uri: 'sip:1001@sip.local',
+            remote_uri: 'sip:1002@sip.local',
+        },
+        methods: {
+            click_stop: function () {
+                ua.stop();
+            },
+            click_call: function () {
+                const session = ua.call(this.remote_uri, {
+                    eventHandlers: {
+                        ended: function (event) {
+                            console.log('ua_call_ended', event);
+                        },
+                        progress: function (event) {
+                            console.log('ua_call_progress', event);
+                        },
+                        failed: function (event) {
+                            console.log ('ua_call_failed', event);
+                        },
+                        confirmed: function (event) {
+                            console.log('ua_call_confirmed', event);
+                        },
+                    },
+                    mediaConstraints: {
+                        audio: true,
+                        video: true,
+                    }
+                });
+                console.log(session);
+            },
+        },
+    });
+
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <link href="https://unpkg.com/@vbarbarosh/smcss@0.8.0/dist/sm.css" rel="stylesheet" />
+    <title>Title of the Page</title>
+</head>
+<body>
+
+<br>
+
+<div id="app" class="mg15">
+
+<div class="w400 h300 oa resize border">
+    <video class="db ww hh"></video>
+</div>
+<div>
+    <button>mute</button>
+    <button>unmute</button>
+    <button>turn off video</button>
+    <button>turn on video</button>
+    <button>call</button>
+    <button>leave</button>
+</div>
+
+</div>
+
+<script src="https://unpkg.com/jquery@3.6.2/dist/jquery.js"></script>
+<script src="https://unpkg.com/bluebird@3.7.2/js/browser/bluebird.js"></script>
+<script src="https://unpkg.com/vue@2.7.14/dist/vue.js"></script>
+<script src="lib/jssip.js"></script>
+
+<script>
+(function () {
+
+    // Create our JsSIP instance and run it:
+    const socket = new JsSIP.WebSocketInterface('ws://127.0.0.1:5062');
+    const configuration = {
+        sockets: [socket],
+        uri: 'sip:1001@sip.local',
+        password: '1234',
+    };
+    const ua = new JsSIP.UA(configuration);
+    ua.start();
+
+    new Vue({
+        el: '#app',
+        data: {
+        },
+    });
+
+
+// Register callbacks to desired call events
+var eventHandlers = {
+  'progress': function(e) {
+    console.log('call is in progress');
+  },
+  'failed': function(e) {
+    console.log('call failed with cause: ', e);
+  },
+  'ended': function(e) {
+    console.log('call ended with cause: ', e);
+  },
+  'confirmed': function(e) {
+    console.log('call confirmed');
+  }
+};
+
+var options = {
+  'eventHandlers' : eventHandlers,
+  'mediaConstraints' : { 'audio': true, 'video': true }
+};
+
+var session = ua.call('sip:1002@sip.local', options);
+console.log(session);
+
+/*
+root@01eb32bb21cf:/opt/routr# cat config/agents.yml 
+- apiVersion: v1beta1
+  kind: Agent
+  metadata:
+    name: John Doe
+  spec:
+    credentials:
+      username: '1001'
+      secret: '1234'
+    domains: [sip.local]
+- apiVersion: v1beta1
+  kind: Agent
+  metadata:
+    name: Janie Doe
+  spec:
+    credentials:
+      username: '1002'
+      secret: '1234'
+    domains: [sip.local]
+- apiVersion: v1beta1
+  kind: Agent
+  metadata:
+    name: Janie Doe
+  spec:
+    credentials:
+      username: '4001'
+      secret: '1234'
+    domains: [sip2.local]
+*/
+
+})();
+</script>
+
+</body>
+</html>
