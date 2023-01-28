@@ -12,6 +12,7 @@ bin/run
 
 ## Resources
 
+* https://jssip.net/
 * https://github.com/fonoster/routr
 * https://github.com/versatica/JsSIP
 * https://hub.docker.com/r/fonoster/routr/
