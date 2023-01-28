@@ -23,3 +23,4 @@ bin/run
 * https://stackoverflow.com/questions/49550881/jssip-play-remote-audio
 * https://stackoverflow.com/questions/57532832/how-to-make-a-sip-call-through-nodejs
 * https://www.youtube.com/watch?v=S5jYWPB0zr8
+* https://www.youtube.com/watch?v=o25iNQbzXXM&list=PLo4vaqmPtSBZ4x9-FXjHh3qELtqDwrScC
