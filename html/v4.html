@@ -13,28 +13,6 @@
 <div v-show="true" id="app" class="w800 ma bs5" style="display:none;">
     <div v-if="is_ua_connecting" class="yellow">Connecting...</div>
     <div v-if="is_ua_connected" class="green">Connected</div>
-    <div>
-        <label class="db">
-            local_uri:
-            <input v-model="local_uri">
-            <select v-model="local_uri">
-                <option v-for="uri in uris" v-bind:selected="(uri === local_uri)">
-                    {{ uri }}
-                </option>
-            </select>
-        </label>
-    </div>
-    <div>
-        <label>
-            remote_uri:
-            <input v-model="remote_uri">
-            <select v-model="remote_uri">
-                <option v-for="uri in uris" v-bind:selected="(uri === remote_uri)">
-                    {{ uri }}
-                </option>
-            </select>
-        </label>
-    </div>
     <div v-if="is_ringing">
         <p>Ringing...</p>
         <button v-on:click="click_ringing_cancel">cancel</button>
@@ -93,14 +71,26 @@
 const default_local = !window.location.search ? 'sip:1001@sip.local' : 'sip:1002@sip.local';
 const default_remote = !window.location.search ? 'sip:1002@sip.local' : 'sip:1001@sip.local';
 
-let ua = null;
+const local_uri = new URLSearchParams(window.location.search).get('local_uri') || default_local;
+const remote_uri = new URLSearchParams(window.location.search).get('remote_uri') || default_remote;
+
+console.log({local_uri, remote_uri});
+
+const socket = new JsSIP.WebSocketInterface('ws://127.0.0.1:3000/sip');
+const configuration = {
+    sockets: [socket],
+    uri: local_uri,
+    password: '1234',
+};
+
+const ua = new JsSIP.UA(configuration);
 let session = null;
 
     new Vue({
         el: '#app',
         data: {
-            local_uri: new URLSearchParams(window.location.search).get('local_uri') || default_local,
-            remote_uri: new URLSearchParams(window.location.search).get('remote_uri') || default_remote,
+            local_uri,
+            remote_uri,
             is_ua_connected: false,
             is_ua_connecting: false,
             is_ua_registered: false,
@@ -113,53 +103,26 @@ let session = null;
             outgoing_video: true,
             messages: [],
             message_body: '',
-            uris: [
-                'sip:1001@sip.local',
-                'sip:1002@sip.local',
-                'sip:4001@sip2.local'
-            ],
         },
         watch: {
-            local_uri: {
-                immediate: true,
-                handler: function () {
-                    const _this = this;
-                    if (ua) {
-                        ua.removeAllListeners();
-                        ua.stop();
-                        ua = null;
-                    }
-                    const socket = new JsSIP.WebSocketInterface('ws://127.0.0.1:3000/sip');
-                    ua = new JsSIP.UA({
-                        sockets: [socket],
-                        uri: this.local_uri,
-                        password: '1234',
-                    });
-                    // https://jssip.net/documentation/3.10.x/api/ua/#section_events
-                    'connecting,connected,disconnected,registered,unregistered,registrationFailed,registrationExpiring,newRTCSession,newMessage,newOptions,sipEvent'.split(',').forEach(function (name) {
-                        ua.on(name, v => console.log(`[ua_${name}]`, v));
-                    });
-                    ua.on('connecting', function () {
-                        _this.is_ua_connected = false;
-                        _this.is_ua_connecting = true;
-                    });
-                    ua.on('connected', this.refresh);
-                    ua.on('disconnected', this.refresh);
-                    ua.on('registered', this.refresh);
-                    ua.on('unregistered', this.refresh);
-                    ua.on('newMessage', this.ua_newMessage);
-                    ua.on('newRTCSession', this.ua_newRTCSession);
-                    ua.start();
-                },
-            },
             outgoing_audio: function (next, prev) {
                 if (session && session.connection && next !== prev) {
-                    next ? session.unmute({audio: true}) : session.mute({audio: true});
+                    if (next) {
+                        session.unmute({audio: true});
+                    }
+                    else {
+                        session.mute({audio: true});
+                    }
                 }
             },
             outgoing_video: function (next, prev) {
                 if (session && session.connection && next !== prev) {
-                    next ? session.unmute({video: true}) : session.mute({video: true});
+                    if (next) {
+                        session.unmute({video: true});
+                    }
+                    else {
+                        session.mute({video: true});
+                    }
                 }
             },
             incoming_audio: function () {
@@ -204,7 +167,7 @@ let session = null;
             ua_newRTCSession: function (event) {
                 // https://jssip.net/documentation/3.10.x/api/session/#section_events
                 'peerconnection,connecting,sending,progress,accepted,confirmed,ended,failed,newDTMF,newInfo,hold,unhold,muted,unmuted,reinvite,update,refer,replaces,sdp,getusermediafailed,peerconnection:createofferfailed,peerconnection:createanswerfailed,peerconnection:setlocaldescriptionfailed,peerconnection:setremotedescriptionfailed'.split(',').forEach(function (name) {
-                    event.session.on(name, v => console.log(`[session_${name}]`, v));
+                    event.session.on(name, v => console.log(`[session_${name}]`));
                 });
                 const _this = this;
                 this.clean();
@@ -247,7 +210,7 @@ let session = null;
             },
             click_ua_call: async function () {
                 const mediaStream = await navigator.mediaDevices.getUserMedia({audio: true, video: true});
-                ua.call(this.remote_uri, {mediaStream});
+                const session = ua.call(this.remote_uri, {mediaStream});
                 this.$refs.outgoing_video.srcObject = mediaStream;
                 this.$refs.outgoing_video.play();
             },
@@ -270,6 +233,24 @@ let session = null;
             click_established_close: function () {
                 this.clean();
             }
+        },
+        created: function () {
+            const _this = this;
+            // https://jssip.net/documentation/3.10.x/api/ua/#section_events
+            'connecting,connected,disconnected,registered,unregistered,registrationFailed,registrationExpiring,newRTCSession,newMessage,newOptions,sipEvent'.split(',').forEach(function (name) {
+                ua.on(name, v => console.log(`[ua_${name}]`, v));
+            });
+            ua.on('connecting', function () {
+                _this.is_ua_connected = false;
+                _this.is_ua_connecting = true;
+            });
+            ua.on('connected', this.refresh);
+            ua.on('disconnected', this.refresh);
+            ua.on('registered', this.refresh);
+            ua.on('unregistered', this.refresh);
+            ua.on('newMessage', this.ua_newMessage);
+            ua.on('newRTCSession', this.ua_newRTCSession);
+            ua.start();
         },
     });
 
