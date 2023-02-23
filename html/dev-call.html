@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <link href="https://unpkg.com/@vbarbarosh/smcss@0.6.1/dist/sm.css" rel="stylesheet" />
+    <title>jssip • toggling audio/video tracks</title>
+</head>
+<body>
+
+<video id="remote_video" class="w400 h300 bs5" autoplay></video>
+<br>
+<button id="call_button">call</button>
+<button id="video_add">video_add</button>
+<button id="video_remove">video_remove</button>
+<button id="audio_add">audio_add</button>
+<button id="audio_remove">audio_remove</button>
+
+<script src="https://unpkg.com/jquery@3.6.2/dist/jquery.js"></script>
+<script src="https://unpkg.com/bluebird@3.7.2/js/browser/bluebird.js"></script>
+<script src="https://unpkg.com/vue@2.7.14/dist/vue.js"></script>
+<script src="lib/jssip.js"></script>
+
+<script>
+const configuration = {
+    sockets: [new JsSIP.WebSocketInterface('ws://127.0.0.1:3000/sip')],
+    uri: 'sip:1001@sip.local',
+    password: '1234',
+};
+
+// JsSIP.debug.enable('JsSIP:*');
+// JsSIP.debug.disable();
+
+let session = null;
+// The following MediaStream object will be used addTrack method. This is
+// necessary to tell other hand to create MediaStream object and add/remove
+// track to/from it. In this case other hand will have stream object firing
+// removetrack events. This event is necessary to notify about track being
+// removed (e.g. video was turned off). Otherwise it need to find another way
+// of knowing if track was removed. (Creating local MediaStream object on the
+// receiving part and adding tracks into it manually will not trigger
+// `removetrack` event. That's why using the same stream object here is
+// important.)
+const stream = new MediaStream();
+const ua = new JsSIP.UA(configuration);
+
+// https://jssip.net/documentation/3.2.x/api/ua/#section_events
+'connecting connected disconnected registered unregistered registrationFailed registrationExpiring newRTCSession newMessage'.split(' ').forEach(function (name) {
+    ua.on(name, function (event) {
+        console.log(`[ua_${name}]`, event);
+    });
+});
+
+ua.on('newRTCSession', function (event) {
+
+    console.log(event.session.connection, event.session.direction);
+
+    function clean() {
+        session = null;
+        remote_video.srcObject = null;
+        call_button.disabled = true;
+        video_add.disabled = false;
+        video_remove.disabled = false;
+        audio_add.disabled = false;
+        audio_remove.disabled = false;
+    }
+
+    session = event.session;
+    session.on('ended', clean);
+    session.on('failed', clean);
+
+    // https://jssip.net/documentation/3.1.x/api/session/
+    'peerconnection connecting sending progress accepted confirmed ended failed newDTMF newInfo hold unhold muted unmuted reinvite update refer replaces sdp getusermediafailed peerconnection:createofferfailed peerconnection:createanswerfailed peerconnection:setlocaldescriptionfailed peerconnection:setremotedescriptionfailed'.split(' ').forEach(function (name) {
+        session.on(name, function (event2) {
+            console.log(`[session_${name}]`, event2);
+        });
+    });
+
+    // https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection#events
+    'connectionstatechange datachannel icecandidate icecandidateerror iceconnectionstatechange icegatheringstatechange negotiationneeded signalingstatechange track addstream removestream'.split(' ').forEach(function (name) {
+        session.connection.addEventListener(name, function (event2) {
+            console.log(`[connection_${name}]`, event2);
+        });
+    });
+
+    call_button.disabled = true;
+    video_add.disabled = false;
+    video_remove.disabled = false;
+    audio_add.disabled = false;
+    audio_remove.disabled = false;
+});
+
+ua.start();
+
+call_button.disabled = false;
+video_add.disabled = true;
+video_remove.disabled = true;
+audio_add.disabled = true;
+audio_remove.disabled = true;
+
+call_button.onclick = function () {
+    ua.call('sip:1002@sip.local', {
+        mediaConstraints: {audio: false, video: false},
+        rtcOfferConstraints: {
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true,
+        }
+    });
+};
+
+video_add.onclick = async function () {
+    const stream = await navigator.mediaDevices.getUserMedia({video: true});
+    const local_streams = session.connection.getLocalStreams();
+    session.connection.addTrack(stream.getTracks()[0], local_streams[0] || stream);
+    // https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/createOffer
+    const ret = session.renegotiate({
+        rtcOfferConstraints: {
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true,
+        },
+    }, function (...args) {
+        console.log('renegotiate_done', args);
+    });
+    console.log(ret);
+};
+
+video_remove.onclick = async function () {
+    const sender = session.connection.getSenders().find(v => v.track?.kind == 'video');
+    if (!sender) {
+        return;
+    }
+    sender.track.stop();
+    session.connection.removeTrack(sender);
+    // https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/createOffer
+    const ret = session.renegotiate({
+        rtcOfferConstraints: {
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true,
+        },
+    }, function (...args) {
+        console.log('renegotiate_done', args);
+    });
+    console.log(ret);
+};
+
+audio_add.onclick = async function () {
+    const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+    const local_streams = session.connection.getLocalStreams();
+    session.connection.addTrack(stream.getTracks()[0], local_streams[0] || stream);
+    // https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/createOffer
+    const ret = session.renegotiate({
+        rtcOfferConstraints: {
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true,
+        },
+    }, function (...args) {
+        console.log('renegotiate_done', args);
+    });
+    console.log(ret);
+};
+
+audio_remove.onclick = async function () {
+    const sender = session.connection.getSenders().find(v => v.track?.kind == 'audio')
+    if (!sender) {
+        return;
+    }
+    sender.track.stop();
+    session.connection.removeTrack(sender);
+    // https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/createOffer
+    const ret = session.renegotiate({
+        rtcOfferConstraints: {
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true,
+        },
+    }, function (...args) {
+        console.log('renegotiate_done', args);
+    });
+    console.log(ret);
+};
+
+</script>
+
+</body>
+</html>
