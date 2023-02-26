@@ -83,13 +83,16 @@ ua.on('newRTCSession', function (event) {
                 });
                 stream.addEventListener('removetrack', function () {
                     console.log('stream.removetrack', stream.getTracks());
-                    remote_video.srcObject = null;
                     if (stream.getTracks().length != 0) {
                         remote_video.srcObject = stream;
                     }
                     else {
                         stream = null;
                     }
+                    remote_video.srcObject = stream;
+                    // XX Refresh VIDEO element
+                    remote_video.controls = !remote_video.controls;
+                    remote_video.controls = !remote_video.controls;
                 });
             }
             // https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrack#events

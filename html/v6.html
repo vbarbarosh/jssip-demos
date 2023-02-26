@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <link href="https://unpkg.com/@vbarbarosh/smcss@0.8.0/dist/sm.css" rel="stylesheet">
+    <title>jssip demo</title>
+</head>
+<body>
+
+<br>
+
+<div v-show="true" id="app" class="w800 ma bs5" style="display:none;">
+    <div v-if="is_ua_connecting" class="yellow">Connecting...</div>
+    <div v-if="is_ua_connected" class="green">Connected</div>
+    <div>
+        <label class="db">
+            local_uri:
+            <input v-model="local_uri">
+            <select v-model="local_uri">
+                <option v-for="uri in uris" v-bind:selected="(uri === local_uri)">
+                    {{ uri }}
+                </option>
+            </select>
+        </label>
+    </div>
+    <div>
+        <label>
+            remote_uri:
+            <input v-model="remote_uri">
+            <select v-model="remote_uri">
+                <option v-for="uri in uris" v-bind:selected="(uri === remote_uri)">
+                    {{ uri }}
+                </option>
+            </select>
+        </label>
+    </div>
+    <div v-if="is_ringing">
+        <p>Ringing...</p>
+        <button v-on:click="click_ringing_cancel">cancel</button>
+    </div>
+    <div v-if="is_incoming">
+        <p>Incoming...</p>
+        <button v-on:click="click_incoming_accept">accept</button>
+        <button v-on:click="click_incoming_reject">reject</button>
+    </div>
+    <div v-if="is_established">
+        <p>Talking...</p>
+        <button v-on:click="click_established_close">close</button>
+    </div>
+    <div v-if="(!is_ringing && !is_incoming && !is_established)">
+        <button v-on:click="click_ua_call">call</button>
+    </div>
+    <div class="hsplit">
+        <div class="w50p">
+            <h2 class="xm">remote</h2>
+            <div class="oa resize border">
+                <video ref="remote_video" class="db ww hh max-ww max-hh" autoplay controls></video>
+            </div>
+            <!--
+            <label><input v-model="remote_audio" type="checkbox"> audio</label>
+            <label><input v-model="remote_video" type="checkbox"> video</label>
+            -->
+        </div>
+        <div class="w50p">
+            <h2 class="xm">local</h2>
+            <div class="oa resize border">
+                <video ref="local_video" class="db ww hh max-ww max-hh" muted autoplay controls></video>
+            </div>
+            <label><input v-model="local_audio" type="checkbox"> audio</label>
+            <label><input v-model="local_video" type="checkbox"> video</label>
+        </div>
+    </div>
+    <div>
+        <ul>
+            <li v-for="message in messages" v-bind:class="{fl: message.is_remote, fr: !message.is_remote}" class="cb">
+                {{ message.body }}
+            </li>
+        </ul>
+        <textarea v-model="message_body" class="db ww xm xp"></textarea>
+        <button v-on:click="click_ua_send_message">send</button>
+    </div>
+</div>
+
+<script src="https://unpkg.com/jquery@3.6.2/dist/jquery.js"></script>
+<script src="https://unpkg.com/bluebird@3.7.2/js/browser/bluebird.js"></script>
+<script src="https://unpkg.com/vue@2.7.14/dist/vue.js"></script>
+<script src="lib/jssip.js"></script>
+
+<script>
+(function () {
+
+const default_local = !window.location.search ? 'sip:1001@sip.local' : 'sip:1002@sip.local';
+const default_remote = !window.location.search ? 'sip:1002@sip.local' : 'sip:1001@sip.local';
+
+let ua = null;
+let session = null;
+let local_stream = new MediaStream();
+let remote_stream = null;
+
+    new Vue({
+        el: '#app',
+        data: {
+            local_uri: new URLSearchParams(window.location.search).get('local_uri') || default_local,
+            remote_uri: new URLSearchParams(window.location.search).get('remote_uri') || default_remote,
+            is_ua_connected: false,
+            is_ua_connecting: false,
+            is_ua_registered: false,
+            is_ringing: false,
+            is_incoming: false,
+            is_established: false,
+            remote_audio: true,
+            remote_video: true,
+            local_audio: true,
+            local_video: true,
+            messages: [],
+            message_body: '',
+            uris: [
+                'sip:1001@sip.local',
+                'sip:1002@sip.local',
+                'sip:4001@sip2.local'
+            ],
+        },
+        watch: {
+            local_uri: {
+                immediate: true,
+                handler: function () {
+                    const _this = this;
+                    if (ua) {
+                        ua.removeAllListeners();
+                        ua.stop();
+                        ua = null;
+                    }
+                    const socket = new JsSIP.WebSocketInterface('ws://127.0.0.1:3000/sip');
+                    ua = new JsSIP.UA({
+                        sockets: [socket],
+                        uri: this.local_uri,
+                        password: '1234',
+                    });
+                    ua.on('connecting', function () {
+                        _this.is_ua_connected = false;
+                        _this.is_ua_connecting = true;
+                    });
+                    ua.on('connected', this.refresh);
+                    ua.on('disconnected', this.refresh);
+                    ua.on('registered', this.refresh);
+                    ua.on('unregistered', this.refresh);
+                    ua.on('newMessage', this.ua_newMessage);
+                    ua.on('newRTCSession', this.ua_newRTCSession);
+                    ua.start();
+                },
+            },
+            local_audio: async function (next, prev) {
+                if (next === prev) {
+                    return;
+                }
+                if (next) {
+                    const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+                    stream.getAudioTracks().forEach(v => local_stream.addTrack(v));
+                }
+                else {
+                    const [track] = local_stream.getAudioTracks();
+                    if (!track) {
+                        return;
+                    }
+                    track.stop();
+                    local_stream.removeTrack(track);
+                }
+                this.refresh_local_video();
+                this.sync_tracks();
+            },
+            local_video: async function (next, prev) {
+                if (next === prev) {
+                    return;
+                }
+                if (next) {
+                    const stream = await navigator.mediaDevices.getUserMedia({video: true});
+                    stream.getVideoTracks().forEach(v => local_stream.addTrack(v));
+                }
+                else {
+                    const [track] = local_stream.getVideoTracks();
+                    if (!track) {
+                        return;
+                    }
+                    track.stop();
+                    local_stream.removeTrack(track);
+                }
+                this.refresh_local_video();
+                this.sync_tracks();
+            },
+            remote_audio: function () {
+            },
+            remote_video: function () {
+            },
+        },
+        methods: {
+            refresh: function () {
+                this.is_ua_connected = ua.isConnected();
+                this.is_ua_connecting = false;
+                this.is_ua_registered = ua.isRegistered();
+                this.is_ringing = (session && session.isInProgress() && session.direction == 'outgoing');
+                this.is_incoming = (session && session.isInProgress() && session.direction == 'incoming');
+                this.is_established = (session && session.isEstablished());
+            },
+            refresh_local_video: function () {
+                this.$refs.local_video.srcObject = local_stream.getTracks().length ? local_stream : null;
+                // XXX Refresh VIDEO element. Necessary when srcObject becomes null
+                this.$refs.local_video.controls = !this.$refs.local_video.controls;
+                this.$refs.local_video.controls = !this.$refs.local_video.controls;
+            },
+            sync_tracks: async function () {
+                if (!session || !session.connection) {
+                    return;
+                }
+                let has_changes = false;
+                local_stream.getTracks().forEach(function (track) {
+                    if (!session.connection.getSenders().find(v => v.track && v.track.id == track.id)) {
+                        has_changes = true;
+                        session.connection.addTrack(track, local_stream);
+                    }
+                });
+                session.connection.getSenders().forEach(function (sender) {
+                    if (sender.track && !local_stream.getTracks().find(v => v.id == sender.track.id)) {
+                        has_changes = true;
+                        session.connection.removeTrack(sender);
+                    }
+                });
+                if (has_changes) {
+                    // https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/createOffer
+                    await new Promise(function (resolve, reject) {
+                        if (!session.renegotiate({}, resolve)) {
+                            reject(new Error('session.renegotiate returned false'));
+                        }
+                    });
+                }
+            },
+            clean: function () {
+                if (session) {
+                    if (!session.isEnded()) {
+                        session.terminate();
+                    }
+                    session = null;
+                }
+                this.$refs.remote_video.srcObject = null;
+                this.$refs.local_video.srcObject = null;
+                this.refresh();
+            },
+            ua_newMessage: function (event) {
+                if (event.originator == 'remote') {
+                    event.message.accept();
+                    this.messages.push({is_remote: true, body: event.request.body});
+                }
+                else {
+                    this.messages.push({is_remote: false, body: event.request.body});
+                }
+                this.refresh();
+            },
+            ua_newRTCSession: function (event) {
+
+                const _this = this;
+                this.clean();
+
+                // XXX Without this local_video stops playing local_stream
+                this.refresh_local_video();
+
+                session = event.session;
+                session.on('connecting', this.refresh);
+                session.on('ended', this.clean);
+                session.on('failed', this.clean);
+                session.on('accepted', this.refresh);
+                session.on('confirmed', this.refresh);
+
+                if (session.connection) {
+                    session.connection.addEventListener('track', peerconnection_track);
+                }
+                else {
+                    session.on('peerconnection', function ({peerconnection}) {
+                        peerconnection.addEventListener('track', peerconnection_track);
+                    });
+                }
+
+                this.refresh();
+
+                function peerconnection_track(event2)
+                {
+                    const {track, streams} = event2;
+                    if (remote_stream !== streams[0]) {
+                        remote_stream = streams[0];
+                        _this.$refs.remote_video.srcObject = remote_stream;
+                        remote_stream.addEventListener('addtrack', function () {
+                            _this.$refs.remote_video.srcObject = null;
+                            _this.$refs.remote_video.srcObject = remote_stream;
+                        });
+                        remote_stream.addEventListener('removetrack', function () {
+                            if (remote_stream.getTracks().length != 0) {
+                                _this.$refs.remote_video.srcObject = remote_stream;
+                            }
+                            else {
+                                remote_stream = null;
+                            }
+                            _this.$refs.remote_video.srcObject = remote_stream;
+                            // XXX Refresh VIDEO element
+                            _this.$refs.remote_video.controls = !_this.$refs.remote_video.controls;
+                            _this.$refs.remote_video.controls = !_this.$refs.remote_video.controls;
+                        });
+                    }
+                }
+            },
+            click_ua_call: async function () {
+                ua.call(this.remote_uri, {
+                    mediaStream: local_stream,
+                    rtcOfferConstraints: {
+                        offerToReceiveAudio: true,
+                        offerToReceiveVideo: true,
+                    },
+                });
+            },
+            click_ua_send_message: function () {
+                ua.sendMessage(this.remote_uri, this.message_body);
+                this.message_body = '';
+            },
+            click_ringing_cancel: function () {
+                this.clean();
+            },
+            click_incoming_accept: async function () {
+                session.answer({
+                    mediaStream: local_stream,
+                    rtcOfferConstraints: {
+                        offerToReceiveAudio: true,
+                        offerToReceiveVideo: true,
+                    },
+                });
+            },
+            click_incoming_reject: function () {
+                this.clean();
+            },
+            click_established_close: function () {
+                this.clean();
+            }
+        },
+        mounted: async function () {
+            if (this.local_audio || this.local_video) {
+                const stream = await navigator.mediaDevices.getUserMedia({audio: this.local_audio, video: this.local_video});
+                stream.getTracks().forEach(v => local_stream.addTrack(v));
+                this.refresh_local_video();
+            }
+        },
+    });
+
+})();
+</script>
+
+</body>
+</html>
